@@ -1,0 +1,27 @@
+[package]
+name = "moodle-sentinel"
+version = "0.1.0"
+authors = ["bdbai <bdbaiapp@163.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+cqrs_builder = { version = "0.1", features = ["full-priority"] }
+
+[dependencies]
+coolq-sdk-rust = { version = "0.1", features = ["async-listener", "tokio-threaded"] }
+tokio = { version = "0.2", features = ["time", "macros"] }
+serde_json = "1.0"
+serde = "1.0"
+reqwest = { version = "0.10", features = ["json"] }
+lazy_static = "1.4"
+refinery = { version = "0.2.1", features = ["rusqlite"] }
+barrel = { version = "0.6", features = ["sqlite3"] }
+rusqlite = { version = "0.21", features = ["bundled", "chrono"] }
+chrono = "0.4"
+futures = "0.3"
+time = "0.1"
+
+[lib]
+crate-type = ["cdylib"]
