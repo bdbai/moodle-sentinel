@@ -3,24 +3,24 @@ use crate::moodle::{get_course_content, get_course_public_information, CourseMod
 use crate::tenant::Tenant;
 use crate::CONN;
 use chrono::{NaiveDateTime, Utc};
-use coolq_sdk_rust::api::{add_log, send_group_msg, CQLogLevel};
+use coolq_sdk_rust::api::{add_log, send_group_msg, send_private_msg, CQLogLevel};
 use futures::lock::Mutex;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use rusqlite::params;
 use std::collections::HashMap;
-use std::mem::swap;
+use std::mem::replace;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::time::{delay_for, Duration};
 
 #[derive(Debug)]
-struct Update {
+struct Notification<'a> {
     tenant: Tenant,
     user_qq: i64,
     course_name: String,
-    modules: Result<Vec<CourseModule>, Error>,
+    modules: &'a Result<Vec<Update>, Error>,
 }
 
 pub async fn start_check_loop() {
@@ -31,7 +31,7 @@ pub async fn start_check_loop() {
                 Ok([m]) => format!(
                     "{} 更新了一个 {}，快去看看吧",
                     update.course_name,
-                    match m {
+                    match &m.module {
                         CourseModule::Mediasite { id: _, name } =>
                             "视频".to_string() + name.as_str(),
                         CourseModule::Resource {
@@ -57,7 +57,7 @@ pub async fn start_check_loop() {
                     send_group_msg(group_qq, msg).expect("无法发送群消息");
                 }
                 Tenant::SenderSelf => {
-                    // TODO: 自己订阅
+                    send_private_msg(update.user_qq, msg).expect("无法发送消息");
                 }
             }
         })
@@ -80,7 +80,58 @@ struct GroupData {
     user_id: u32,
 }
 
-async fn run_check(mut on_new_message: impl FnMut(Update)) -> Result<(), Error> {
+#[derive(Clone, Copy, Debug)]
+enum UpdateType {
+    Insert,
+    Update(u32),
+}
+
+#[derive(Debug)]
+struct Update {
+    update_type: UpdateType,
+    user_id: u32,
+    course_id: u32,
+    module: CourseModule,
+}
+
+async fn save_group_updates(updates: impl Iterator<Item = Update>) -> Result<(), Error> {
+    let mut conn = CONN.lock().await;
+    let tx = conn.transaction()?;
+    let mut update_stmt =
+        tx.prepare_cached("UPDATE `user_course_module` SET `updated_at` = ?1 WHERE `id` = ?2")?;
+    let mut insert_stmt = tx.prepare_cached("INSERT INTO `user_course_module` (`user_id`, `course_id`, `module_id`, `updated_at`) VALUES (?1, ?2, ?3, ?4)")?;
+    // TODO: check the last update timestamp from response
+    let now = Utc::now().naive_utc();
+    lazy_static! {
+        static ref EXPIRATION: time::Duration = time::Duration::minutes(1);
+    }
+    for ((user_id, module_id), (update_type, course_id)) in updates
+        // Dedup
+        .map(|u| {
+            (
+                (u.user_id, u.module.get_id().unwrap()),
+                (u.update_type, u.course_id),
+            )
+        })
+        .collect::<HashMap<_, _>>()
+        .into_iter()
+    {
+        match update_type {
+            UpdateType::Insert => {
+                insert_stmt.execute(params![user_id, course_id, module_id, now])?;
+            }
+            UpdateType::Update(record_id) => {
+                update_stmt.execute(params![now, record_id])?;
+            }
+        }
+    }
+    drop(update_stmt);
+    drop(insert_stmt);
+    tx.commit()?;
+    Ok(())
+}
+
+async fn run_check(mut on_new_message: impl FnMut(Notification)) -> Result<(), Error> {
     // TODO: Check self subscription
     let (grouped_updates, mut group_course_futures) = {
         let conn = CONN.lock().await;
@@ -118,27 +169,33 @@ async fn run_check(mut on_new_message: impl FnMut(Update)) -> Result<(), Error> 
         (grouped_updates, group_course_futures)
     };
     while let Some(()) = group_course_futures.next().await {}
-    for (group_qq, (updates, course_name)) in grouped_updates {
-        let mut updates = updates.lock().await;
+    for (&group_qq, (updates, course_name)) in &grouped_updates {
+        let updates = updates.lock().await;
         let course_name = course_name.lock().await;
         let course_name = match course_name.deref() {
             Some(s) => s,
             None => continue,
         };
-        let mut inner_modules = Ok(Vec::new());
-        swap(&mut *updates, &mut inner_modules);
-        on_new_message(Update {
+        on_new_message(Notification {
             tenant: Tenant::Group(group_qq),
             user_qq: 0,
             course_name: course_name.clone(),
-            modules: inner_modules,
+            modules: &*updates,
         });
     }
-    Ok(())
+    Ok(save_group_updates(
+        grouped_updates
+            .into_iter()
+            .map(|(_, (updates, _))| replace(&mut *updates.try_lock().unwrap(), Ok(Vec::new())))
+            .filter(|u| u.is_ok())
+            .map(|u| u.unwrap())
+            .flatten(),
+    )
+    .await?)
 }
 async fn check_group_course(
     group_data: GroupData,
-    updates: Arc<Mutex<Result<Vec<CourseModule>, Error>>>,
+    updates: Arc<Mutex<Result<Vec<Update>, Error>>>,
     course_name: Arc<Mutex<Option<String>>>,
 ) {
     let ret = try_check_group_course(&group_data, course_name).await;
@@ -148,29 +205,35 @@ async fn check_group_course(
         (Ok(_), Err(err)) => *updates = Err(err),
         (Err(_), _) => {}
     }
-    if updates.is_err() {
-        // Increase failure count
-        let conn = CONN.lock().await;
-        if let Err(e) = conn.execute(
-            "UPDATE `user_course_group` SET `failure_count` = `failure_count` + 1 \
-            WHERE `group_qq` = ?1 AND `course_id` = ?2",
-            params![group_data.group_qq, group_data.course_id],
-        ) {
-            dbg!(&e);
-            add_log(
-                CQLogLevel::ERROR,
-                "inc_fail_cnt",
-                format!("无法增加失败次数，{}", e),
-            )
-            .expect("Cannot send cq msg");
-        }
+    // Increase failure count
+    let conn = CONN.lock().await;
+    if let Err(e) = conn.execute(
+        updates
+            .as_ref()
+            .map(|_| {
+                "UPDATE `user_course_group` SET `failure_count` = 0 \
+                WHERE `group_qq` = ?1 AND `course_id` = ?2"
+            })
+            .unwrap_or(
+                "UPDATE `user_course_group` SET `failure_count` = `failure_count` + 1 \
+                WHERE `group_qq` = ?1 AND `course_id` = ?2",
+            ),
+        params![group_data.group_qq, group_data.course_id],
+    ) {
+        dbg!(&e);
+        add_log(
+            CQLogLevel::ERROR,
+            "inc_fail_cnt",
+            format!("无法处理失败次数，{:#?}", e),
+        )
+        .expect("Cannot send cq msg");
     }
 }
 
 async fn try_check_group_course(
     group_data: &GroupData,
     course_name: Arc<Mutex<Option<String>>>,
-) -> Result<Vec<CourseModule>, Error> {
+) -> Result<Vec<Update>, Error> {
     // Try to get the course name
     if let Some(mut c) = course_name.try_lock() {
         if c.is_none() {
@@ -198,8 +261,7 @@ async fn try_check_group_course(
         .into_iter()
         .flat_map(|s| s.modules)
         .filter(|m| m.get_id().is_some());
-    let mut conn = CONN.lock().await;
-    let mut updates = Vec::new();
+    let conn = CONN.lock().await;
     let module_records: HashMap<u32, (u32, NaiveDateTime)> = conn
         .prepare_cached(
             "SELECT `id`, `module_id`, `updated_at` FROM `user_course_module`\
@@ -209,35 +271,21 @@ async fn try_check_group_course(
             Ok((row.get(1)?, (row.get(0)?, row.get(2)?)))
         })?
         .collect::<Result<_, _>>()?;
-    let tx = conn.transaction()?;
-    let mut update_stmt =
-        tx.prepare_cached("UPDATE `user_course_module` SET `updated_at` = ?1 WHERE `id` = ?2")?;
-    let mut insert_stmt = tx.prepare_cached("INSERT INTO `user_course_module` (`user_id`, `course_id`, `module_id`, `updated_at`) VALUES (?1, ?2, ?3, ?4)")?;
-    let now = Utc::now().naive_utc();
-    lazy_static! {
-        static ref EXPIRATION: time::Duration = time::Duration::minutes(1);
-    }
-    for module in modules {
-        let module_id = module.get_id().unwrap();
-        if let Some((record_id, _last_update)) = module_records.get(&module_id) {
-            // TODO: check the last update timestamp from response
-            update_stmt.execute(params![now, record_id])?;
-        } else {
-            // insert and fire update
-            updates.push(module);
-            insert_stmt.execute(params![
-                group_data.user_id,
-                group_data.course_id,
-                module_id,
-                now
-            ])?;
-        }
-    }
-    // Manually drop, otherwise cannot move tx
-    drop(update_stmt);
-    drop(insert_stmt);
-    tx.commit()?;
-    Ok(updates)
+    Ok(modules
+        .filter(|m| m.get_id().is_some())
+        // TODO: check the last update timestamp from response
+        .filter(|m| !module_records.contains_key(&m.get_id().unwrap()))
+        .map(|m| Update {
+            update_type: if module_records.contains_key(&m.get_id().unwrap()) {
+                UpdateType::Update(m.get_id().unwrap())
+            } else {
+                UpdateType::Insert
+            },
+            user_id: group_data.user_id,
+            course_id: group_data.course_id,
+            module: m,
+        })
+        .collect())
 }
 
 #[tokio::test]
