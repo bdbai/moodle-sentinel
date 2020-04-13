@@ -11,9 +11,12 @@ use crate::subscribe::{add_subscribe, remove_subscribe};
 use crate::tenant::Tenant;
 use crate::user::get_user_id_from_qq;
 use coolq_sdk_rust::api::{
-    add_log, get_login_qq, send_group_msg, set_friend_add_request, CQLogLevel,
+    add_log, get_login_qq, send_group_msg, set_friend_add_request, set_group_add_request_v2,
+    CQLogLevel,
 };
-use coolq_sdk_rust::events::{AddFriendRequestEvent, GroupMessageEvent, PrivateMessageEvent};
+use coolq_sdk_rust::events::{
+    AddFriendRequestEvent, AddGroupRequestEvent, GroupMessageEvent, PrivateMessageEvent,
+};
 use coolq_sdk_rust::prelude::listener;
 use coolq_sdk_rust::targets::cqcode::CQCode;
 use lazy_static::lazy_static;
@@ -106,6 +109,13 @@ async fn on_group_message(event: GroupMessageEvent) {
 #[listener]
 fn add_friend_request(event: AddFriendRequestEvent) {
     set_friend_add_request(event.flag, true, "").expect("添加好友请求处理失败");
+}
+
+#[listener]
+fn add_group_request(event: AddGroupRequestEvent) {
+    if event.sub_type == 2 {
+        set_group_add_request_v2(event.flag, event.sub_type, true, "").expect("无法受邀加入群");
+    }
 }
 
 #[tokio::test]
