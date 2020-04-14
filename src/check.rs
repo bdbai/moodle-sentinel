@@ -133,7 +133,7 @@ async fn save_group_updates(updates: impl Iterator<Item = Update>) -> Result<(),
 
 async fn run_check(mut on_new_message: impl FnMut(Notification)) -> Result<(), Error> {
     // TODO: Check self subscription
-    let (grouped_updates, mut group_course_futures) = {
+    let (grouped_updates, course_names, mut group_course_futures) = {
         let conn = CONN.lock().await;
         // TODO: pagination
         let mut stmt = conn.prepare_cached(
@@ -143,73 +143,74 @@ async fn run_check(mut on_new_message: impl FnMut(Notification)) -> Result<(), E
             WHERE `g`.`failure_count` < 3",
         )?;
         let mut grouped_updates = HashMap::new();
+        let mut course_names = HashMap::new();
         let group_course_futures: FuturesUnordered<_> = stmt
             .query_map(params![], |row| {
                 let group_qq = row.get(3)?;
                 let updates = grouped_updates
                     .entry(group_qq)
-                    .or_insert((
-                        Arc::new(Mutex::new(Ok(Vec::new()))),
-                        Arc::new(Mutex::new(None)),
-                    ))
+                    .or_insert(Arc::new(Mutex::new(Vec::new())))
+                    .clone();
+                let course_id: u32 = row.get(2)?;
+                let course_name = course_names
+                    .entry(course_id)
+                    .or_insert(Arc::new(Mutex::new(None)))
                     .clone();
                 Ok(check_group_course(
                     GroupData {
                         token: row.get(0)?,
                         group_id: row.get(1)?,
-                        course_id: row.get(2)?,
+                        course_id,
                         group_qq,
                         user_id: row.get(4)?,
                     },
-                    updates.0,
-                    updates.1,
+                    updates,
+                    course_name,
                 ))
             })?
             .collect::<Result<_, _>>()?;
-        (grouped_updates, group_course_futures)
+        (grouped_updates, course_names, group_course_futures)
     };
     while let Some(()) = group_course_futures.next().await {}
-    for (&group_qq, (updates, course_name)) in &grouped_updates {
+    for (&group_qq, updates) in &grouped_updates {
         let updates = updates.lock().await;
-        let course_name = course_name.lock().await;
-        let course_name = match course_name.deref() {
-            Some(s) => s,
-            None => continue,
-        };
-        on_new_message(Notification {
-            tenant: Tenant::Group(group_qq),
-            user_qq: 0,
-            course_name: course_name.clone(),
-            modules: &*updates,
-        });
+        for (course_id, result) in &*updates {
+            let course_name = course_names[course_id].try_lock().unwrap();
+            let course_name = match course_name.deref() {
+                Some(s) => s,
+                None => continue,
+            };
+            on_new_message(Notification {
+                tenant: Tenant::Group(group_qq),
+                user_qq: 0,
+                course_name: course_name.clone(),
+                modules: result,
+            });
+        }
     }
     Ok(save_group_updates(
         grouped_updates
             .into_iter()
-            .map(|(_, (updates, _))| replace(&mut *updates.try_lock().unwrap(), Ok(Vec::new())))
+            .flat_map(|(_, course_update)| {
+                replace(&mut *course_update.try_lock().unwrap(), Vec::new())
+            })
+            .map(|(_course_id, result)| result)
             .filter(|u| u.is_ok())
-            .map(|u| u.unwrap())
-            .flatten(),
+            .flat_map(|u| u.unwrap()),
     )
     .await?)
 }
 async fn check_group_course(
     group_data: GroupData,
-    updates: Arc<Mutex<Result<Vec<Update>, Error>>>,
+    updates: Arc<Mutex<Vec<(u32, Result<Vec<Update>, Error>)>>>,
     course_name: Arc<Mutex<Option<String>>>,
 ) {
     let ret = try_check_group_course(&group_data, course_name).await;
     let mut updates = updates.lock().await;
-    match (&mut *updates, ret) {
-        (Ok(updates), Ok(ref mut ret)) => updates.append(ret),
-        (Ok(_), Err(err)) => *updates = Err(err),
-        (Err(_), _) => {}
-    }
     // Increase failure count
     let conn = CONN.lock().await;
     if let Err(e) = conn.execute(
-        updates
-            .as_ref()
+        ret.as_ref()
             .map(|_| {
                 "UPDATE `user_course_group` SET `failure_count` = 0 \
                 WHERE `group_qq` = ?1 AND `course_id` = ?2"
@@ -228,6 +229,7 @@ async fn check_group_course(
         )
         .expect("Cannot send cq msg");
     }
+    updates.push((group_data.course_id, ret));
 }
 
 async fn try_check_group_course(
