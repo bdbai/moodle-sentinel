@@ -29,17 +29,21 @@ pub async fn start_check_loop() {
             let msg = match update.modules.as_ref().map(|v| v.as_slice()) {
                 Ok([]) => return,
                 Ok([m]) => format!(
-                    "{} 更新了一个 {}，快去看看吧",
+                    "{} 更新了一个{}，快去看看吧",
                     update.course_name,
                     match &m.module {
                         CourseModule::Mediasite { id: _, name } =>
-                            "视频".to_string() + name.as_str(),
+                            "视频 ".to_string() + name.as_str(),
                         CourseModule::Resource {
                             id: _,
                             name,
                             info: _,
-                        } => "文件".to_string() + name.as_str(),
-                        _ => return,
+                        } => "文件 ".to_string() + name.as_str(),
+                        CourseModule::Url { id: _, contents } =>
+                            "链接 ".to_string()
+                                + contents.first().map(|c| c.name.as_str()).unwrap_or(""),
+                        CourseModule::Folder { name, .. } => "文件夹 ".to_string() + name,
+                        CourseModule::Other => return,
                     }
                 ),
                 Ok(n) => format!(

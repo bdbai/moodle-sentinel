@@ -56,6 +56,16 @@ pub struct ResourceInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Content {
+    #[serde(rename = "fileurl")]
+    pub url: String,
+    #[serde(rename = "filename")]
+    pub name: String,
+    #[serde(rename = "timemodified")]
+    pub last_modified: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "modname")]
 pub enum CourseModule {
     #[serde(rename = "resource")]
@@ -67,6 +77,14 @@ pub enum CourseModule {
     },
     #[serde(rename = "mediasite")]
     Mediasite { id: u32, name: String },
+    #[serde(rename = "url")]
+    Url { id: u32, contents: Vec<Content> },
+    #[serde(rename = "folder")]
+    Folder {
+        id: u32,
+        name: String,
+        contents: Vec<Content>,
+    },
     #[serde(other)]
     Other,
 }
@@ -74,12 +92,10 @@ pub enum CourseModule {
 impl CourseModule {
     pub fn get_id(&self) -> Option<u32> {
         match self {
-            CourseModule::Resource {
-                id,
-                name: _,
-                info: _,
-            } => Some(*id),
+            CourseModule::Resource { id, .. } => Some(*id),
             CourseModule::Mediasite { id, name: _ } => Some(*id),
+            CourseModule::Url { id, contents: _ } => Some(*id),
+            CourseModule::Folder { id, .. } => Some(*id),
             CourseModule::Other => None,
         }
     }

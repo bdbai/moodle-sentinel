@@ -23,12 +23,10 @@ fn save_course_modules(
     for section in course_content {
         for module in &section.modules {
             let module_id = *match module {
-                CourseModule::Resource {
-                    id,
-                    name: _,
-                    info: _,
-                } => id,
+                CourseModule::Resource { id, .. } => id,
                 CourseModule::Mediasite { id, name: _ } => id,
+                CourseModule::Url { id, contents: _ } => id,
+                CourseModule::Folder { id, .. } => id,
                 CourseModule::Other => continue,
             };
             stmt.execute(params![user_id, course_id, module_id, updated_at])?;
