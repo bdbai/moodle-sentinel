@@ -24,7 +24,22 @@ struct Notification<'a> {
 }
 
 pub async fn start_check_loop() {
+    // Initial check
+    // Avoid msg spam at startup
+    match run_check(|_| {}).await {
+        Ok(()) => {
+            add_log(CQLogLevel::INFO, "check", "初始课程内容更新检查完成").expect("Cannot send log")
+        }
+        Err(e) => add_log(
+            CQLogLevel::ERROR,
+            "check",
+            format!("初始课程内容更新检查失败：{:#?}", e),
+        )
+        .expect("Cannot send log"),
+    };
     loop {
+        // TODO: 时间间隔？
+        delay_for(Duration::from_secs(60 * 5)).await;
         if let Err(e) = run_check(|update| {
             let msg = match update.modules.as_ref().map(|v| v.as_slice()) {
                 Ok([]) => return,
@@ -71,8 +86,6 @@ pub async fn start_check_loop() {
             add_log(CQLogLevel::ERROR, "update", format!("无法更新，{:#?}", e))
                 .expect("Cannot send cq log");
         }
-        // TODO: 时间间隔？
-        delay_for(Duration::from_secs(60 * 5)).await;
     }
 }
 
