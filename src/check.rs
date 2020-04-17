@@ -67,10 +67,17 @@ pub async fn start_check_loop() {
                     update.course_name,
                     n.len()
                 ),
-                Err(e) => format!(
-                    "更新 {} 时出错了，将停止后续更新\n{}",
-                    update.course_name, e
-                ),
+                Err(e) => {
+                    let _ = add_log(
+                        CQLogLevel::ERROR,
+                        "check",
+                        format!("更新 {:#?} 出错：{:#?}", update, e),
+                    );
+                    format!(
+                        "更新 {} 时出错了，将停止后续更新\n{}",
+                        update.course_name, e
+                    )
+                }
             };
             match update.tenant {
                 Tenant::Group(group_qq) => {
