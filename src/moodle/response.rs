@@ -85,6 +85,8 @@ pub enum CourseModule {
         name: String,
         contents: Vec<Content>,
     },
+    #[serde(rename = "page")]
+    Page { id: u32, name: String },
     #[serde(other)]
     Other,
 }
@@ -96,6 +98,7 @@ impl CourseModule {
             CourseModule::Mediasite { id, name: _ } => Some(*id),
             CourseModule::Url { id, contents: _ } => Some(*id),
             CourseModule::Folder { id, .. } => Some(*id),
+            CourseModule::Page { id, .. } => Some(*id),
             CourseModule::Other => None,
         }
     }

@@ -43,6 +43,7 @@ pub async fn start_check_loop() {
                             "链接 ".to_string()
                                 + contents.first().map(|c| c.name.as_str()).unwrap_or(""),
                         CourseModule::Folder { name, .. } => "文件夹 ".to_string() + name,
+                        CourseModule::Page { name, .. } => "页面 ".to_string() + name,
                         CourseModule::Other => return,
                     }
                 ),

@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::moodle::{get_course_content, CourseModule, CourseSection};
+use crate::moodle::{get_course_content, CourseSection};
 use crate::tenant::Tenant;
 use crate::user::get_user_moodle_token;
 use crate::CONN;
@@ -22,12 +22,9 @@ fn save_course_modules(
     let updated_at = Utc::now().naive_utc();
     for section in course_content {
         for module in &section.modules {
-            let module_id = *match module {
-                CourseModule::Resource { id, .. } => id,
-                CourseModule::Mediasite { id, name: _ } => id,
-                CourseModule::Url { id, contents: _ } => id,
-                CourseModule::Folder { id, .. } => id,
-                CourseModule::Other => continue,
+            let module_id = match module.get_id() {
+                Some(id) => id,
+                None => continue,
             };
             stmt.execute(params![user_id, course_id, module_id, updated_at])?;
         }
