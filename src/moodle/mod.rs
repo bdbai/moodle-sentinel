@@ -2,7 +2,7 @@ mod error;
 mod response;
 
 pub use crate::moodle::error::Error;
-pub use crate::moodle::response::{CourseModule, CourseSection};
+pub use crate::moodle::response::{CourseModule, CourseSection, ModuleType};
 
 use crate::moodle::response::{CoursesPublicInformation, LoginResult, MoodleError, Response};
 use lazy_static::lazy_static;

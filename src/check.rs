@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::moodle::{get_course_content, get_course_public_information, CourseModule};
+use crate::moodle::{get_course_content, get_course_public_information, CourseModule, ModuleType};
 use crate::tenant::Tenant;
 use crate::CONN;
 use chrono::{NaiveDateTime, Utc};
@@ -44,22 +44,29 @@ pub async fn start_check_loop() {
             let msg = match update.modules.as_ref().map(|v| v.as_slice()) {
                 Ok([]) => return,
                 Ok([m]) => format!(
-                    "{} 更新了一个{}，快去看看吧",
+                    "{} 更新了一个{}{} {}，快去看看吧",
                     update.course_name,
-                    match &m.module {
-                        CourseModule::Mediasite { id: _, name } =>
-                            "视频 ".to_string() + name.as_str(),
-                        CourseModule::Resource {
-                            id: _,
-                            name,
-                            info: _,
-                        } => "文件 ".to_string() + name.as_str(),
-                        CourseModule::Url { id: _, contents } =>
-                            "链接 ".to_string()
-                                + contents.first().map(|c| c.name.as_str()).unwrap_or(""),
-                        CourseModule::Folder { name, .. } => "文件夹 ".to_string() + name,
-                        CourseModule::Page { name, .. } => "页面 ".to_string() + name,
-                        CourseModule::Other => return,
+                    if m.module.user_visible {
+                        ""
+                    } else {
+                        "隐藏的"
+                    },
+                    match &m.module.content {
+                        ModuleType::Mediasite => "视频",
+                        ModuleType::Resource { .. } => "文件",
+                        ModuleType::Url { .. } => "链接",
+                        ModuleType::Folder { .. } => "文件夹",
+                        ModuleType::Page { .. } => "页面",
+                        ModuleType::Other => return,
+                    },
+                    if let ModuleType::Url { contents } = &m.module.content {
+                        contents
+                            .as_ref()
+                            .and_then(|c| c.first())
+                            .map(|c| c.name.as_str())
+                            .unwrap_or(m.module.name.as_str())
+                    } else {
+                        m.module.name.as_str()
                     }
                 ),
                 Ok(n) => format!(
@@ -132,12 +139,7 @@ async fn save_group_updates(updates: impl Iterator<Item = Update>) -> Result<(),
     }
     for ((user_id, module_id), (update_type, course_id)) in updates
         // Dedup
-        .map(|u| {
-            (
-                (u.user_id, u.module.get_id().unwrap()),
-                (u.update_type, u.course_id),
-            )
-        })
+        .map(|u| ((u.user_id, u.module.id), (u.update_type, u.course_id)))
         .collect::<HashMap<_, _>>()
         .into_iter()
     {
@@ -286,8 +288,7 @@ async fn try_check_group_course(
     let modules = get_course_content(group_data.token.as_str(), group_data.course_id)
         .await?
         .into_iter()
-        .flat_map(|s| s.modules)
-        .filter(|m| m.get_id().is_some());
+        .flat_map(|s| s.modules);
     let conn = CONN.lock().await;
     let module_records: HashMap<u32, (u32, NaiveDateTime)> = conn
         .prepare_cached(
@@ -299,12 +300,11 @@ async fn try_check_group_course(
         })?
         .collect::<Result<_, _>>()?;
     Ok(modules
-        .filter(|m| m.get_id().is_some())
         // TODO: check the last update timestamp from response
-        .filter(|m| !module_records.contains_key(&m.get_id().unwrap()))
+        .filter(|m| !module_records.contains_key(&m.id))
         .map(|m| Update {
-            update_type: if module_records.contains_key(&m.get_id().unwrap()) {
-                UpdateType::Update(m.get_id().unwrap())
+            update_type: if module_records.contains_key(&m.id) {
+                UpdateType::Update(m.id)
             } else {
                 UpdateType::Insert
             },

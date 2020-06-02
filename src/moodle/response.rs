@@ -65,43 +65,38 @@ pub struct Content {
     pub last_modified: i32,
 }
 
+// All fields must be Option<T> because of user-invisible contents
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "modname")]
-pub enum CourseModule {
+pub enum ModuleType {
     #[serde(rename = "resource")]
     Resource {
-        id: u32,
-        name: String,
         #[serde(rename = "contentsinfo")]
-        info: ResourceInfo,
+        info: Option<ResourceInfo>,
     },
     #[serde(rename = "mediasite")]
-    Mediasite { id: u32, name: String },
+    Mediasite,
     #[serde(rename = "url")]
-    Url { id: u32, contents: Vec<Content> },
+    Url { contents: Option<Vec<Content>> },
     #[serde(rename = "folder")]
-    Folder {
-        id: u32,
-        name: String,
-        contents: Vec<Content>,
-    },
+    Folder { contents: Option<Vec<Content>> },
     #[serde(rename = "page")]
-    Page { id: u32, name: String },
+    Page,
     #[serde(other)]
     Other,
 }
 
-impl CourseModule {
-    pub fn get_id(&self) -> Option<u32> {
-        match self {
-            CourseModule::Resource { id, .. } => Some(*id),
-            CourseModule::Mediasite { id, name: _ } => Some(*id),
-            CourseModule::Url { id, contents: _ } => Some(*id),
-            CourseModule::Folder { id, .. } => Some(*id),
-            CourseModule::Page { id, .. } => Some(*id),
-            CourseModule::Other => None,
-        }
-    }
+#[derive(Debug, Clone, Deserialize)]
+pub struct CourseModule {
+    #[serde(default)]
+    pub id: u32,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    #[serde(rename = "uservisible")]
+    pub user_visible: bool,
+    #[serde(flatten)]
+    pub content: ModuleType,
 }
 
 #[derive(Debug, Clone, Deserialize)]

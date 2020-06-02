@@ -22,11 +22,7 @@ fn save_course_modules(
     let updated_at = Utc::now().naive_utc();
     for section in course_content {
         for module in &section.modules {
-            let module_id = match module.get_id() {
-                Some(id) => id,
-                None => continue,
-            };
-            stmt.execute(params![user_id, course_id, module_id, updated_at])?;
+            stmt.execute(params![user_id, course_id, module.id, updated_at])?;
         }
     }
     Ok(())
