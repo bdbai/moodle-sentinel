@@ -44,7 +44,7 @@ pub async fn start_check_loop() {
             let msg = match update.modules.as_ref().map(|v| v.as_slice()) {
                 Ok([]) => return,
                 Ok([m]) => format!(
-                    "{} 更新了一个{}{} {}，快去看看吧",
+                    "{} 发布了一个{}{} {}，快去看看吧",
                     update.course_name,
                     if m.module.user_visible {
                         ""
@@ -57,6 +57,7 @@ pub async fn start_check_loop() {
                         ModuleType::Url { .. } => "链接",
                         ModuleType::Folder { .. } => "文件夹",
                         ModuleType::Page { .. } => "页面",
+                        ModuleType::Assignment => "作业",
                         ModuleType::Other => return,
                     },
                     if let ModuleType::Url { contents } = &m.module.content {
@@ -70,7 +71,7 @@ pub async fn start_check_loop() {
                     }
                 ),
                 Ok(n) => format!(
-                    "{} 有 {} 个内容更新了，快去看看吧",
+                    "{} 发布了 {} 个内容，快去看看吧",
                     update.course_name,
                     n.len()
                 ),

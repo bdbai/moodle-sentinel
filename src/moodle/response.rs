@@ -82,6 +82,8 @@ pub enum ModuleType {
     Folder { contents: Option<Vec<Content>> },
     #[serde(rename = "page")]
     Page,
+    #[serde(rename = "assign")]
+    Assignment,
     #[serde(other)]
     Other,
 }
