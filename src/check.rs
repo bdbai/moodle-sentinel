@@ -264,20 +264,30 @@ async fn try_check_group_course(
     group_data: &GroupData,
     course_name: Arc<Mutex<Option<String>>>,
 ) -> Result<Vec<Update>, Error> {
+    let course_id = group_data.course_id;
     // Try to get the course name
     if let Some(mut c) = course_name.try_lock() {
         if c.is_none() {
             // Get course name
-            match get_course_public_information(group_data.token.as_str(), group_data.course_id)
-                .await
-            {
+            match get_course_public_information(group_data.token.as_str(), course_id).await {
                 Ok(mut info) => {
-                    *c = info.courses.pop().map(|c| c.full_name);
+                    *c = Some(
+                        info.courses
+                            .pop()
+                            .map(|c| c.full_name)
+                            .unwrap_or(format!("未知课程 {}", course_id)),
+                    );
                 }
                 Err(e) => {
-                    dbg!(&e);
-                    // add_log(CQLogLevel::ERROR, "course_name", format!("{:#?}", e))
-                    //     .expect("Cannot send course_name error message to cq");
+                    // Must assign a course name otherwise error notification
+                    // will be muted
+                    *c = Some(format!("未知课程 {}", course_id));
+                    add_log(
+                        CQLogLevel::ERROR,
+                        "course_name",
+                        format!("获取课程名称错误 {:#?}", e),
+                    )
+                    .expect("Cannot send course_name error message to cq");
                 }
             }
         }
@@ -286,7 +296,7 @@ async fn try_check_group_course(
     // the course name
 
     // Get course modules to check updates
-    let modules = get_course_content(group_data.token.as_str(), group_data.course_id)
+    let modules = get_course_content(group_data.token.as_str(), course_id)
         .await?
         .into_iter()
         .flat_map(|s| s.modules);
@@ -296,7 +306,7 @@ async fn try_check_group_course(
             "SELECT `id`, `module_id`, `updated_at` FROM `user_course_module`\
                 WHERE `user_id` = ?1 AND `course_id` = ?2",
         )?
-        .query_map(params![group_data.user_id, group_data.course_id], |row| {
+        .query_map(params![group_data.user_id, course_id], |row| {
             Ok((row.get(1)?, (row.get(0)?, row.get(2)?)))
         })?
         .collect::<Result<_, _>>()?;
@@ -310,7 +320,7 @@ async fn try_check_group_course(
                 UpdateType::Insert
             },
             user_id: group_data.user_id,
-            course_id: group_data.course_id,
+            course_id,
             module: m,
         })
         .collect())
