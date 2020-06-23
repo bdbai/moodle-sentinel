@@ -98,6 +98,13 @@ pub async fn remove_subscribe(user_id: u32, course_id: u32, tenant: Tenant) -> R
     }
 }
 
+pub async fn remove_group_subscribe(group_qq: i64) -> Result<usize, Error> {
+    Ok(CONN.lock().await.execute(
+        "DELETE FROM `user_course_group` WHERE `group_qq` = ?1",
+        params![group_qq],
+    )?)
+}
+
 #[tokio::test]
 async fn test_add_remove_self_subscribe() -> Result<(), Error> {
     let conn = CONN.lock().await;
@@ -169,5 +176,22 @@ async fn test_add_remove_group_subscribe() -> Result<(), Error> {
     ) {
         panic!("Remote non-exist record does not throw");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_remove_group_subscription() -> Result<(), Error> {
+    let user_id = crate::user::get_user_id_from_qq(env!("CQMS_QQ").parse().unwrap())
+        .await
+        .unwrap();
+    let group_qq = env!("CQMS_QQ_GROUP").parse().unwrap();
+    let tenant = Tenant::Group(group_qq);
+    let course_id = env!("CQMS_COURSE_ID").parse::<u32>().unwrap();
+    add_subscribe(user_id, course_id, tenant).await?;
+    println!("Added course to group");
+
+    let removed = remove_group_subscribe(group_qq).await?;
+    assert!(removed > 0);
+    println!("Removed courses from group");
     Ok(())
 }

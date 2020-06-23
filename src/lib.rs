@@ -7,7 +7,7 @@ mod tenant;
 mod user;
 
 use crate::check::start_check_loop;
-use crate::subscribe::{add_subscribe, remove_subscribe};
+use crate::subscribe::{add_subscribe, remove_group_subscribe, remove_subscribe};
 use crate::tenant::Tenant;
 use crate::user::get_user_id_from_qq;
 use coolq_sdk_rust::api::{
@@ -15,10 +15,12 @@ use coolq_sdk_rust::api::{
     CQLogLevel,
 };
 use coolq_sdk_rust::events::{
-    AddFriendRequestEvent, AddGroupRequestEvent, GroupMessageEvent, PrivateMessageEvent,
+    AddFriendRequestEvent, AddGroupRequestEvent, GroupMemberDecreaseEvent, GroupMessageEvent,
+    PrivateMessageEvent,
 };
 use coolq_sdk_rust::prelude::listener;
 use coolq_sdk_rust::targets::cqcode::CQCode;
+use coolq_sdk_rust::targets::group::Group;
 use lazy_static::lazy_static;
 use rusqlite::Connection;
 use tokio::sync::Mutex;
@@ -104,6 +106,30 @@ async fn on_group_message(event: GroupMessageEvent) {
             .unwrap_or_else(|e| format!("{}", e)),
     )
     .expect("无法回复群消息");
+}
+
+#[listener]
+async fn group_member_decrease(event: GroupMemberDecreaseEvent) {
+    if MY_QQ.eq(&event.being_operate_user.user_id) {
+        // 被踢出群
+        let Group {
+            group_id,
+            group_name,
+            ..
+        } = event.group;
+        let removed_subscribe_count = remove_group_subscribe(group_id)
+            .await
+            .expect(format!("Cannot remove group {}", group_id).as_str());
+        add_log(
+            CQLogLevel::INFO,
+            "subscribe",
+            format!(
+                "已退订 {}({}) 群内的 {} 个订阅",
+                group_name, group_id, removed_subscribe_count
+            ),
+        )
+        .expect("无法写入日志");
+    }
 }
 
 #[listener]
