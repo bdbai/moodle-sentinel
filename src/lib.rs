@@ -55,7 +55,7 @@ fn on_private_message(_event: PrivateMessageEvent) {
     ()
 }
 
-#[listener]
+#[listener(priority = "low")]
 async fn on_group_message(event: GroupMessageEvent) {
     let atme = event.msg.cqcodes.iter().any(|c| match c {
         CQCode::At(qq) => MY_QQ.eq(qq),
