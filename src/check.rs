@@ -88,13 +88,20 @@ pub async fn start_check_loop() {
                 }
             };
             match update.tenant {
-                Tenant::Group(group_qq) => {
-                    send_group_msg(group_qq, msg).expect("无法发送群消息");
-                }
-                Tenant::SenderSelf => {
-                    send_private_msg(update.user_qq, msg).expect("无法发送消息");
-                }
+                Tenant::Group(group_qq) => send_group_msg(group_qq, msg.as_str()),
+                Tenant::SenderSelf => send_private_msg(update.user_qq, msg.as_str()),
             }
+            .or_else(|e| {
+                add_log(
+                    CQLogLevel::ERROR,
+                    "update",
+                    format!(
+                        "无法发送消息\"{}\"到 {:?} 因为 {:#?}",
+                        msg, update.tenant, e
+                    ),
+                )
+            })
+            .expect("Cannot add log");
         })
         .await
         {

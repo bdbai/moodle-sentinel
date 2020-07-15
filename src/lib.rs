@@ -68,7 +68,15 @@ async fn on_group_message(event: GroupMessageEvent) {
     let user_id = match get_user_id_from_qq(event.user.user_id).await {
         Ok(i) => i,
         Err(error::Error::NotExist) => {
-            send_group_msg(group_id, "别急 再等等").expect("无法发送消息");
+            send_group_msg(group_id, "别急 再等等")
+                .or_else(|e| {
+                    add_log(
+                        CQLogLevel::ERROR,
+                        "group",
+                        format!("无法发送消息默认消息到群 {} 因为 {:#?}", group_id, e),
+                    )
+                })
+                .expect("Cannot add log");
             return;
         }
         Err(e) => {
@@ -100,12 +108,18 @@ async fn on_group_message(event: GroupMessageEvent) {
         },
         _ => Ok("说啥呢 听不懂"),
     };
-    send_group_msg(
-        group_id,
-        msg.map(|s| s.to_string())
-            .unwrap_or_else(|e| format!("{}", e)),
-    )
-    .expect("无法回复群消息");
+    let msg = msg
+        .map(|s| s.to_string())
+        .unwrap_or_else(|e| format!("{}", e));
+    send_group_msg(group_id, msg.as_str())
+        .or_else(|e| {
+            add_log(
+                CQLogLevel::ERROR,
+                "group",
+                format!("无法回复群消息\"{}\"到 {} 因为 {:#?}", msg, group_id, e),
+            )
+        })
+        .expect("Cannot add log");
 }
 
 #[listener]
